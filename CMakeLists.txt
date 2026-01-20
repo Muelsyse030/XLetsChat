@@ -22,5 +22,6 @@ find_package(hiredis CONFIG REQUIRED)
 find_package(PostgreSQL REQUIRED)
 
 # --- 包含子项目 ---
+add_subdirectory(proto)
 add_subdirectory(server/gateway)
 add_subdirectory(server/logic_server)

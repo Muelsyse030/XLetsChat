@@ -8,4 +8,5 @@ target_link_libraries(logic_server
     ${WORKFLOW_LIBRARIES}
     workflow
     ${PostgreSQL_LIBRARIES}
+    im_proto_lib
 )
