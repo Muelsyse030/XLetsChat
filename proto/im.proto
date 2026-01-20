@@ -1,0 +1,63 @@
+syntax = "proto3";
+package im;
+
+enum ErrorCode {
+    ERR_SUCCESS = 0;
+    ERR_SYS_ERROR = 1;
+    ERR_AUTH_FAIL = 1001;
+    ERR_USER_NOT_FOUND = 1002;
+}
+
+enum MsgType {
+    MSG_TEXT = 0;
+    MSG_IMAGE = 1;
+    MSG_AUDIO = 2;
+    MSG_FILE = 3;
+}
+
+message LoginReq {
+    int64 uid = 1;
+    string token = 2;
+    string device_id = 3;
+    int64 last_msg_id = 4;
+}
+
+message LoginRes {
+    ErrorCode err_code = 1;
+    string err_msg = 2;
+    string session_id = 3;
+    int64 server_time = 4;
+}
+
+message ChatMsg {
+    int64 msg_id = 1;
+    int64 from_uid = 2;
+    int64 to_uid = 3;
+    int64 session_id = 4;
+    MsgType msg_type = 5;
+    string content = 6;
+    int64 create_time = 7;
+}
+
+message MsgSendReq {
+    ChatMsg msg = 1;
+}
+
+message MsgSendRes {
+    ErrorCode err_code = 1;
+    int64 msg_id = 2;
+    int64 create_time = 3;
+}
+
+message MsgPush {
+    ChatMsg msg = 1;
+}
+
+message MsgAck {
+    int64 msg_id = 1;
+    int64 from_uid = 2;
+}
+
+message Heartbeat {
+    int64 uid = 1;
+}
