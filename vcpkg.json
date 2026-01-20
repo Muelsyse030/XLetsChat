@@ -9,6 +9,7 @@
     "nlohmann-json", 
     "yaml-cpp",      
     "hiredis",       
-    "libpq"          
+    "libpq",     
+    "uwebsockets"     
   ]
 }
