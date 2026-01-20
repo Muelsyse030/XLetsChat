@@ -1,4 +1,54 @@
+# -------------------
+# 1. 标准编译构建目录
+# -------------------
 build/
-.vscode/
-*.o
 bin/
+lib/
+out/
+
+# -------------------
+# 2. CMake 生成的临时文件
+# -------------------
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+#以此结尾的文件通常是临时生成的，但在你的 cmake/ 目录下可能有自己写的 .cmake 模块
+#所以我们只忽略根目录下的 install 文件，或者你可以根据情况保留 cmake/ 目录下的文件
+!cmake/*.cmake
+
+# -------------------
+# 3. Vcpkg (C++ 包管理器) - 非常重要！
+# -------------------
+# 如果 vcpkg 是作为子模块或克隆在项目里的，忽略它的构建产物
+vcpkg_installed/
+vcpkg/buildtrees/
+vcpkg/downloads/
+vcpkg/packages/
+vcpkg/installed/
+# 注意：vcpkg.json 必须保留，它是你的依赖清单
+
+# -------------------
+# 4. IDE 和编辑器配置
+# -------------------
+.vscode/
+.idea/
+*.swp
+*.user
+
+# -------------------
+# 5. Protobuf 生成的代码 (可选)
+# -------------------
+# 如果你的 proto 编译结果生成在源码目录（而不是 build 目录），
+# 建议忽略生成的 .pb.cc 和 .pb.h 文件，只保留 .proto 源文件
+# *.pb.cc
+# *.pb.h
+# *.grpc.pb.cc
+# *.grpc.pb.h
+
+# -------------------
+# 6. 操作系统生成的文件
+# -------------------
+.DS_Store
+Thumbs.db
