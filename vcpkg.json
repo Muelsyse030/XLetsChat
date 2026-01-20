@@ -1,0 +1,14 @@
+{
+  "name": "letschat",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "protobuf",      
+    "grpc",          
+    "workflow",      
+    "spdlog",        
+    "nlohmann-json", 
+    "yaml-cpp",      
+    "hiredis",       
+    "libpq"          
+  ]
+}
