@@ -6,3 +6,16 @@ service LogicService {
     rpc Login (LoginReq) returns (LoginRes);
     rpc SendMsg (MsgSendReq) returns (MsgSendRes);
 }
+service GatewayService {
+    rpc PushMsg (PushMsgReq) returns (PushMsgRes);
+}
+
+message PushMsgReq {
+    int64 to_uid = 1;
+    bytes content = 2;
+}
+
+message PushMsgRes {
+    int32 err_code = 1;
+    string err_msg = 2;
+}
