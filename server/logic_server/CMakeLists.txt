@@ -9,4 +9,5 @@ target_link_libraries(logic_server
     workflow
     ${PostgreSQL_LIBRARIES}
     im_proto_lib
+    hiredis::hiredis
 )
