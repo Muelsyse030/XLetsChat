@@ -8,6 +8,7 @@
 #include "im.pb.h"
 #include "im_service.grpc.pb.h"
 #include "redis_client.h"
+#include "db_client.h"
 #include <mutex>
 #include <unordered_map>
 
@@ -130,6 +131,12 @@ void RunServer(){
     RedisClient redis;
     if(!redis.connect("0.0.0.0" , 6379 , "redis_pwd_123")){
         spdlog::error("Failed to connect to Redis. Exiting.");
+        return;
+    }
+    DbClient db;
+    std::string db_conn_str = "dbname=LetsChat user=admin password=password123 hostaddr=127.0.0.1 port=5432";
+    if(!db.Connect(db_conn_str)){
+        spdlog::error("failed to connect to database , server exit");
         return;
     }
     LogicServiceImpl service(&redis);
