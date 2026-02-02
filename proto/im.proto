@@ -61,3 +61,14 @@ message MsgAck {
 message Heartbeat {
     int64 uid = 1;
 }
+
+message SyncMsgReq{
+    int64 uid = 1;
+    int64 last_msg_id = 2;
+}
+
+message SyncMsgRes{
+    int32 err_code = 1;
+    string err_msg = 2;
+    repeated ChatMsg msgs = 3;
+}

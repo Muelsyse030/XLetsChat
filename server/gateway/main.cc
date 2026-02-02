@@ -192,6 +192,37 @@ int main() {
                             }
                         }
                 }
+                else if(header.cmd_id == 0x1006){
+                    im::SyncMsgReq req;
+                    if(message.length() >= HEADER_LEN + (header.length - HEADER_LEN) &&
+                    req.ParseFromArray(buffer + HEADER_LEN , message.length() - HEADER_LEN)){
+                        spdlog::info(">>>Recv SyncMsgReq LastMsgID = {}",req.last_msg_id());
+                        req.set_uid(ws->getUserData()->uid);
+                        im::SyncMsgRes res;
+                        grpc::ClientContext context;
+                        grpc::Status status = logic_stub->SyncMsg(&context , req , &res);
+
+                        if(status.ok()){
+                            std::string res_body;
+                            res.SerializeToString(&res_body);
+
+                            PacketHeader resp_header;
+                            resp_header.length = HEADER_LEN + res_body.size();
+                            resp_header.version = header.version;
+                            resp_header.cmd_id = 0x1007; // SyncMsgRes
+                            resp_header.seq_id = header.seq_id;
+
+                            uint8_t head_buf[HEADER_LEN];
+                            PacketHelper::EncodeHeader(resp_header , head_buf);
+
+                            std::string send_data;
+                            send_data.append((char*)head_buf , HEADER_LEN);
+                            send_data.append(res_body);
+                            ws->send(send_data , uWS::OpCode::BINARY);
+                            spdlog::info("<<<Reply SyncMsgRes: Count={}" , res.msgs_size());
+                        }
+                    }
+                }
             },
             .close = [](auto *ws, int code, std::string_view message) {
                 SessionManager::GetInstance().RemoveSession(ws->getUserData()->uid);

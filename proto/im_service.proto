@@ -5,6 +5,7 @@ import "im.proto";
 service LogicService {
     rpc Login (LoginReq) returns (LoginRes);
     rpc SendMsg (MsgSendReq) returns (MsgSendRes);
+    rpc SyncMsg (SyncMsgReq) returns (SyncMsgRes);
 }
 service GatewayService {
     rpc PushMsg (PushMsgReq) returns (PushMsgRes);

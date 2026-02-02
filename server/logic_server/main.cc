@@ -52,25 +52,21 @@ std::string PackPushMsg(const im::ChatMsg& chat_msg) {
 
 class LogicServiceImpl final : public LogicService::Service{
 public:
-    LogicServiceImpl(RedisClient* redis) : redis_(redis){}
+    LogicServiceImpl(RedisClient* redis , DbClient* db) : redis_(redis),db_(db){}
 
     Status Login(ServerContext* context , const LoginReq* request , LoginRes* reply) override {
         spdlog::info("PRC Login Request: Uid= {} , token = {} , device = {}" , request->uid() , request->token() , request->device_id());
+        std::string db_password = db_->GetUserPassword(request->uid());
+        if(!db_password.empty() && db_password == request->token()){
+            reply->set_err_code(im::ERR_SUCCESS);
+            reply->set_session_id("sess_"+ std::to_string(request->uid()));
 
-        if(request->token() == "123456"){
-            reply->set_err_code(im::ErrorCode::ERR_SUCCESS);
-            reply->set_session_id("sess_" + std::to_string(request->uid())); //生成一个假session
-            reply->set_server_time(time(nullptr));
-            spdlog::info("->Login Success: uid = {}" , request->uid());
-            std::string redis_key = "IM:USER:SESS:" + std::to_string(request->uid());
+            std::string redis_key = "IM:USER:SESS" + std::to_string(request->uid());
             std::string gateway_addr = "0.0.0.0:50052";
+
             if(redis_->Set(redis_key , gateway_addr)){
-                spdlog::info("->Saved session to Redis: {} -> {}" , redis_key , gateway_addr);
+                spdlog::info("->Login Success : Uid = {}", request->uid());
             }
-            else{
-                spdlog::error("->Write Redis Failed!");
-            }
-            spdlog::info("-> Login Success: UID={}", request->uid());
         }
         else{
             reply->set_err_code(im::ErrorCode::ERR_AUTH_FAIL);
@@ -85,6 +81,11 @@ public:
         
         int64_t msg_id = std::chrono::system_clock::now().time_since_epoch().count();
        
+        bool saved = db_->SaveMessage(std::to_string(msg_id) , msg.from_uid() , msg.to_uid() , msg.content());
+        if(!saved){
+            spdlog::error("failed to save messahe to DB");
+        }
+
         std::string redis_key = "IM:USER:SESS:" + std::to_string(msg.to_uid());
         auto gateway_addr_opt = redis_->Get(redis_key);
 
@@ -122,8 +123,21 @@ public:
 
         return Status::OK;
     }
+    Status SyncMsg(ServerContext* context , const im::SyncMsgReq* request , im::SyncMsgRes* reply) override{
+        spdlog::info("RPC SyncMsg: Uid={} lastMsgID={}",request->uid() , request->last_msg_id());
+
+        std::vector<im::ChatMsg> history_msgs = db_->GetofflineMsgs(request->uid() , request->last_msg_id());
+
+        reply->set_err_code(im::ERR_SUCCESS);
+        for(const auto& msg : history_msgs){
+            *reply->add_msgs() = msg;
+        }
+        spdlog::info("->Synced {} message to UID={}" , history_msgs.size() , request->uid());
+        return Status::OK;
+    }
     private:
         RedisClient* redis_;
+        DbClient* db_;
 };
 
 void RunServer(){
@@ -139,7 +153,7 @@ void RunServer(){
         spdlog::error("failed to connect to database , server exit");
         return;
     }
-    LogicServiceImpl service(&redis);
+    LogicServiceImpl service(&redis,&db);
 
     ServerBuilder builder;
     builder.AddListeningPort(server_address , grpc::InsecureServerCredentials());
