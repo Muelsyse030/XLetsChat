@@ -6,6 +6,8 @@ service LogicService {
     rpc Login (LoginReq) returns (LoginRes);
     rpc SendMsg (MsgSendReq) returns (MsgSendRes);
     rpc SyncMsg (SyncMsgReq) returns (SyncMsgRes);
+    rpc RegisterUser (RegisterReq) returns (RegisterRes);
+    rpc HttpLogin (HttpLoginReq) returns (HttpLoginRes);
 }
 service GatewayService {
     rpc PushMsg (PushMsgReq) returns (PushMsgRes);

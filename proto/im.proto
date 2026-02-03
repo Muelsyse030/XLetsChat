@@ -72,3 +72,27 @@ message SyncMsgRes{
     string err_msg = 2;
     repeated ChatMsg msgs = 3;
 }
+
+message RegisterReq{
+    string email = 1;
+    string nickname = 2;
+    string password = 3;
+}
+
+message RegisterRes{
+    int32 err_code = 1;
+    string err_msg = 2;
+    int64 uid = 3;
+}
+message HttpLoginReq {
+    string email = 1;
+    string password = 2;
+}
+message HttpLoginRes {
+    int32 err_code = 1;
+    string err_msg = 2;
+    int64 uid = 3;
+    string token = 4;     
+    string nickname = 5;  
+    string avatar = 6;   
+}

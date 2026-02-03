@@ -135,6 +135,33 @@ public:
         spdlog::info("->Synced {} message to UID={}" , history_msgs.size() , request->uid());
         return Status::OK;
     }
+    Status RegisterUser(ServerContext* context , const im::RegisterReq* request , im::RegisterRes* reply) override{
+        spdlog::info("RPC Register : emial={} nick={}",request->email() , request->nickname());
+
+        int64_t uid = db_->CreateUser(request->nickname() , request->password() , request->email());
+        if(uid > 0){
+            reply->set_err_code(0);
+            reply->set_uid(uid);
+            spdlog::info("User created: uid={}" , uid);
+        }else{
+            reply->set_err_code(1);
+            reply->set_err_msg("create user failed");
+        }
+        return Status::OK;
+    }
+    Status HttpLogin(ServerContext* context , const im::HttpLoginReq* request , im::HttpLoginRes* reply) override {
+        spdlog::info("RPC Httplogin: emial={}",request->email());
+        if(db_->CheckUserByEmail(request->email() , request->password() , *reply)){
+            reply->set_err_code(0);
+            spdlog::info("User login sucess : uid={}",reply->uid());
+            redis_->Set("IM:USER:TOKEN"+std::to_string(reply->uid()) , request->password());
+        }else{
+            reply->set_err_code(1);
+            reply->set_err_msg("Invaild email or passwrod");
+            spdlog::warn("User login failed : email={}",request->email());
+        }
+        return Status::OK;
+    }
     private:
         RedisClient* redis_;
         DbClient* db_;
@@ -166,7 +193,7 @@ void RunServer(){
 }
 
 int main(){
-    spdlog::set_pattern("[%H:%H%S %z][%^%L%$][Logic]%v");
+    spdlog::set_pattern("[%H:%H:%S%z][%^%L%$][Logic]%v");
 
     RunServer();
 

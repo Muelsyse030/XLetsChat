@@ -100,6 +100,46 @@ class DbClient{
         PQclear(res);
         return msgs;
     }
+    int64_t CreateUser(const std::string& username , const std::string& password , const std::string& email){
+        if(!conn_){
+            return -1;
+        }
+        std::string sql = "INSERT INTO t_user (username, password, email) VALUES ('" + 
+                      username + "', '" + 
+                      password + "', '" + 
+                      email + "') RETURNING id";
+
+        PGresult* res = PQexec(conn_, sql.c_str());
+
+        if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+        spdlog::error("Insert user failed: {}", PQerrorMessage(conn_));
+        PQclear(res);
+        return -1;
+        }
+        int64_t uid = std::stoll(PQgetvalue(res, 0, 0));
+        PQclear(res);
+        return uid;
+    }
+    bool CheckUserByEmail(const std::string& email , const std::string& password , im::HttpLoginRes& user_info){
+        if(!conn_) return false;
+        std::string sql = "SELECT id, nickname, password FROM t_user WHERE email='" + email + "'";
+        PGresult* res = PQexec(conn_ , sql.c_str());
+        if(PQresultStatus(res) != PGRES_TUPLES_OK || PQntuples(res) == 0){
+            PQclear(res);
+            return false;
+        }
+        std::string db_pass = PQgetvalue(res , 0 ,2);
+        if(db_pass != password){
+            PQclear(res);
+            return false;
+        }
+        user_info.set_uid(std::stoll(PQgetvalue(res , 0 , 0)));
+        user_info.set_nickname(PQgetvalue(res , 0 , 1));
+        user_info.set_token(db_pass);
+
+        PQclear(res);
+        return true;
+    }
     private:
     PGconn* conn_;
 };
