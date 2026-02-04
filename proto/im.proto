@@ -96,3 +96,13 @@ message HttpLoginRes {
     string nickname = 5;  
     string avatar = 6;   
 }
+message GetUploadUrlReq{
+    int64 uid = 1;
+    string file_name = 2;
+}
+message GetUploadUrlRes{
+    int32 err_code = 1;
+    string err_msg = 2;
+    string upload_url = 3;
+    string download_url = 4;
+}

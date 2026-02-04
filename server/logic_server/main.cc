@@ -11,6 +11,7 @@
 #include "db_client.h"
 #include <mutex>
 #include <unordered_map>
+#include "s3_client.h"
 
 using grpc::Server;
 using grpc::ServerBuilder;
@@ -52,7 +53,7 @@ std::string PackPushMsg(const im::ChatMsg& chat_msg) {
 
 class LogicServiceImpl final : public LogicService::Service{
 public:
-    LogicServiceImpl(RedisClient* redis , DbClient* db) : redis_(redis),db_(db){}
+    LogicServiceImpl(RedisClient* redis , DbClient* db , S3Client* s3) : redis_(redis),db_(db),s3_(s3){}
 
     Status Login(ServerContext* context , const LoginReq* request , LoginRes* reply) override {
         spdlog::info("PRC Login Request: Uid= {} , token = {} , device = {}" , request->uid() , request->token() , request->device_id());
@@ -162,9 +163,24 @@ public:
         }
         return Status::OK;
     }
+    Status GetUploadUrl(ServerContext* context , const im::GetUploadUrlReq* request, im::GetUploadUrlRes* reply){
+        spdlog::info("RPC GetUploadUrl UID={} File={}" , request->uid() , request->file_name());
+        int64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+        std::string object_key = std::to_string(request->uid()) + "/" + std::to_string(now) + "_" + request->file_name();
+        std::string upload_url = s3_->GetPresignedPutUrl(object_key);
+        std::string download_url = s3_->GetDownloadUrl(object_key);
+
+        reply->set_err_code(im::ERR_SUCCESS);
+        reply->set_upload_url(upload_url);
+        reply->set_download_url(download_url);
+
+        spdlog::info("-> Generated Upload URL for {}", object_key);
+        return Status::OK;
+    }
     private:
         RedisClient* redis_;
         DbClient* db_;
+        S3Client* s3_;
 };
 
 void RunServer(){
@@ -175,12 +191,13 @@ void RunServer(){
         return;
     }
     DbClient db;
+    S3Client s3("http://127.0.0.1:9000", "minio_admin", "minio_password", "letschat");
     std::string db_conn_str = "dbname=LetsChat user=admin password=password123 hostaddr=127.0.0.1 port=5432";
     if(!db.Connect(db_conn_str)){
         spdlog::error("failed to connect to database , server exit");
         return;
     }
-    LogicServiceImpl service(&redis,&db);
+    LogicServiceImpl service(&redis, &db ,&s3);
 
     ServerBuilder builder;
     builder.AddListeningPort(server_address , grpc::InsecureServerCredentials());

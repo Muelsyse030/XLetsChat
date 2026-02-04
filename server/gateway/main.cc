@@ -231,6 +231,38 @@ int main() {
                         }
                     }
                 }
+                else if (header.cmd_id == 0x1008) {
+                    im::GetUploadUrlReq req;
+                    if (message.length() >= HEADER_LEN + (header.length - HEADER_LEN) &&
+                        req.ParseFromArray(buffer + HEADER_LEN, message.length() - HEADER_LEN)) {
+                        
+                        req.set_uid(ws->getUserData()->uid);
+                        spdlog::info(">>> Recv GetUploadUrlReq");
+
+                        im::GetUploadUrlRes res;
+                        grpc::ClientContext context;
+                        grpc::Status status = logic_stub->GetUploadUrl(&context, req, &res);
+
+                        if (status.ok()) {
+                            std::string res_body;
+                            res.SerializeToString(&res_body);
+                            
+                            PacketHeader resp_header;
+                            resp_header.length = HEADER_LEN + res_body.size();
+                            resp_header.version = header.version;
+                            resp_header.cmd_id = 0x1009; // GetUploadUrlRes
+                            resp_header.seq_id = header.seq_id;
+                            
+                            uint8_t head_buf[HEADER_LEN];
+                            PacketHelper::EncodeHeader(resp_header, head_buf);
+                            
+                            std::string send_data;
+                            send_data.append((char*)head_buf, HEADER_LEN);
+                            send_data.append(res_body);
+                            ws->send(send_data, uWS::OpCode::BINARY);
+                        }
+                    }
+                }
             },
             .close = [](auto *ws, int code, std::string_view message) {
                 SessionManager::GetInstance().RemoveSession(ws->getUserData()->uid);
