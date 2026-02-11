@@ -1,21 +1,31 @@
 #pragma once
-#include <string>
-#include <iostream>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <netdb.h>
-#include <cstring>
-#include <sstream>
-#include <spdlog/spdlog.h>
 
-std::string ExtractJsonValue(const std::string& json, const std::string& key) {
+#include <arpa/inet.h>
+#include <cstring>
+#include <mutex>
+#include <netdb.h>
+#include <spdlog/spdlog.h>
+#include <sstream>
+#include <string>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <unordered_map>
+
+struct ParsedEndpoint {
+    std::string scheme;
+    std::string host;
+    int port;
+};
+
+inline std::string ExtractJsonValue(const std::string& json, const std::string& key) {
     std::string search = "\"" + key + "\":\"";
     size_t start = json.find(search);
     if (start == std::string::npos) {
         search = "\"" + key + "\":";
         start = json.find(search);
-        if (start == std::string::npos) return "";
+        if (start == std::string::npos) {
+            return "";
+        }
         start += search.length();
         size_t end = json.find_first_of(",}", start);
         return json.substr(start, end - start);
@@ -25,50 +35,129 @@ std::string ExtractJsonValue(const std::string& json, const std::string& key) {
     return json.substr(start, end - start);
 }
 
+inline ParsedEndpoint ParseEndpoint(const std::string& endpoint, const std::string& default_scheme, int default_port) {
+    ParsedEndpoint parsed{default_scheme, endpoint, default_port};
+
+    std::string remain = endpoint;
+    size_t scheme_pos = endpoint.find("://");
+    if (scheme_pos != std::string::npos) {
+        parsed.scheme = endpoint.substr(0, scheme_pos);
+        remain = endpoint.substr(scheme_pos + 3);
+    }
+
+    size_t slash_pos = remain.find('/');
+    if (slash_pos != std::string::npos) {
+        remain = remain.substr(0, slash_pos);
+    }
+
+    size_t port_pos = remain.rfind(':');
+    if (port_pos != std::string::npos) {
+        parsed.host = remain.substr(0, port_pos);
+        parsed.port = std::stoi(remain.substr(port_pos + 1));
+    } else {
+        parsed.host = remain;
+    }
+
+    return parsed;
+}
+
 class S3Client {
 public:
-    S3Client(const std::string& endpoint, const std::string& access_key, const std::string& secret_key, const std::string& bucket)
-        : master_host_("weed_master"), master_port_(9333) {
+    S3Client(const std::string& master_endpoint,
+             const std::string& public_endpoint,
+             const std::string& bucket,
+             const std::string& access_key,
+             const std::string& secret_key)
+        : master_(ParseEndpoint(master_endpoint, "http", 9333)),
+          public_(ParseEndpoint(public_endpoint, "http", 8080)),
+          bucket_(bucket),
+          access_key_(access_key),
+          secret_key_(secret_key) {}
+
+    bool CheckConnectivity() {
+        std::string response = HttpGet(master_.host, master_.port, "/dir/status");
+        if (response.empty()) {
+            spdlog::error("SeaweedFS connectivity check failed: endpoint={}:{}", master_.host, master_.port);
+            return false;
+        }
+        spdlog::info("SeaweedFS connectivity check ok: endpoint={}:{}", master_.host, master_.port);
+        return true;
     }
 
     std::string GetPresignedPutUrl(const std::string& object_name, int expires_in_seconds = 600) {
-        std::string response = HttpGet(master_host_, master_port_, "/dir/assign");
-        
+        (void)expires_in_seconds;
+        std::string assign_path = "/dir/assign?count=1&collection=" + bucket_;
+        std::string response = HttpGet(master_.host, master_.port, assign_path);
+
         if (response.empty()) {
-            spdlog::error("SeaweedFS: Failed to connect to master");
+            spdlog::error("SeaweedFS assign failed: empty response from {}:{}", master_.host, master_.port);
             return "";
         }
+
         std::string fid = ExtractJsonValue(response, "fid");
-        
         if (fid.empty()) {
-            spdlog::error("SeaweedFS: Invalid response: {}", response);
+            spdlog::error("SeaweedFS assign failed: invalid response={} ", response);
             return "";
         }
-        std::string final_url = "http://127.0.0.1:8080/" + fid;
-        
-        spdlog::info("SeaweedFS Assigned: fid={} final_url={}", fid, final_url);
+
+        {
+            std::lock_guard<std::mutex> lock(fid_map_mu_);
+            object_fid_map_[object_name] = fid;
+        }
+
+        std::string final_url = BuildPublicBaseUrl() + "/" + fid + "?collection=" + bucket_ + "&filename=" + object_name;
+        if (!access_key_.empty()) {
+            final_url += "&accessKey=" + access_key_;
+        }
+        if (!secret_key_.empty()) {
+            final_url += "&secretKey=" + secret_key_;
+        }
+
+        spdlog::info("SeaweedFS assign success: object={} fid={} upload_url={}", object_name, fid, final_url);
         return final_url;
     }
 
     std::string GetDownloadUrl(const std::string& object_name) {
-        return "http://127.0.0.1:8080/" + object_name;
+        std::string fid;
+        {
+            std::lock_guard<std::mutex> lock(fid_map_mu_);
+            auto it = object_fid_map_.find(object_name);
+            if (it != object_fid_map_.end()) {
+                fid = it->second;
+            }
+        }
+
+        if (fid.empty()) {
+            spdlog::warn("SeaweedFS download url fallback: missing fid for object={}.", object_name);
+            return "";
+        }
+
+        return BuildPublicBaseUrl() + "/" + fid + "?collection=" + bucket_;
     }
 
 private:
-    std::string master_host_;
-    int master_port_;
+    ParsedEndpoint master_;
+    ParsedEndpoint public_;
+    std::string bucket_;
+    std::string access_key_;
+    std::string secret_key_;
+    std::mutex fid_map_mu_;
+    std::unordered_map<std::string, std::string> object_fid_map_;
+
+    std::string BuildPublicBaseUrl() const {
+        return public_.scheme + "://" + public_.host + ":" + std::to_string(public_.port);
+    }
 
     std::string HttpGet(const std::string& host, int port, const std::string& path) {
         int sock = socket(AF_INET, SOCK_STREAM, 0);
-        if (sock < 0) return "";
+        if (sock < 0) {
+            return "";
+        }
 
         struct hostent* server = gethostbyname(host.c_str());
         if (server == NULL) {
-             server = gethostbyname("127.0.0.1"); // Fallback
-             if (server == NULL) {
-                 close(sock);
-                 return "";
-             }
+            close(sock);
+            return "";
         }
 
         struct sockaddr_in serv_addr;
@@ -92,7 +181,9 @@ private:
         char buffer[4096];
         while (true) {
             int bytes = recv(sock, buffer, 4095, 0);
-            if (bytes <= 0) break;
+            if (bytes <= 0) {
+                break;
+            }
             buffer[bytes] = 0;
             response += buffer;
         }
