@@ -26,19 +26,28 @@ services:
     networks:
       - im_net
 
-  # 3. 对象存储 (MinIO - 类似 S3)
-  minio:
-    image: minio/minio
-    container_name: minqq_minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minio_admin
-      MINIO_ROOT_PASSWORD: minio_password
+  # 3. 对象存储 (SeaweedFS)
+  weed_master:
+    image: chrislusf/seaweedfs:3.74
+    container_name: letschat_weed_master
+    command: "master -ip=weed_master -mdir=/data"
     ports:
-      - "9000:9000" # API 端口
-      - "9001:9001" # 控制台端口
+      - "9333:9333"
     volumes:
-      - minio_data:/data
+      - weed_master_data:/data
+    networks:
+      - im_net
+
+  weed_volume:
+    image: chrislusf/seaweedfs:3.74
+    container_name: letschat_weed_volume
+    command: "volume -mserver=weed_master:9333 -ip=weed_volume -port=8080 -dir=/data"
+    depends_on:
+      - weed_master
+    ports:
+      - "8080:8080"
+    volumes:
+      - weed_volume_data:/data
     networks:
       - im_net
 
@@ -48,4 +57,5 @@ networks:
 
 volumes:
   pg_data:
-  minio_data:
+  weed_master_data:
+  weed_volume_data:

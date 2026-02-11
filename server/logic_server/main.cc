@@ -1,6 +1,8 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <cstdlib>
+#include <cstring>
 
 #include <grpcpp/grpcpp.h>
 #include <spdlog/spdlog.h>
@@ -170,6 +172,13 @@ public:
         std::string upload_url = s3_->GetPresignedPutUrl(object_key);
         std::string download_url = s3_->GetDownloadUrl(object_key);
 
+        if (upload_url.empty() || download_url.empty()) {
+            reply->set_err_code(im::ERR_SYS_ERROR);
+            reply->set_err_msg("SeaweedFS unavailable");
+            spdlog::error("-> Failed to generate upload/download URL for {}", object_key);
+            return Status::OK;
+        }
+
         reply->set_err_code(im::ERR_SUCCESS);
         reply->set_upload_url(upload_url);
         reply->set_download_url(download_url);
@@ -183,19 +192,44 @@ public:
         S3Client* s3_;
 };
 
-void RunServer(){
+std::string GetEnvOrDefault(const char* key, const std::string& default_value) {
+    const char* value = std::getenv(key);
+    if (value == nullptr || std::strlen(value) == 0) {
+        return default_value;
+    }
+    return value;
+}
+
+int RunServer(){
+    constexpr int kStorageConnectErrorCode = 42;
     std::string server_address("0.0.0.0:50051");
     RedisClient redis;
     if(!redis.connect("0.0.0.0" , 6379 , "redis_pwd_123")){
         spdlog::error("Failed to connect to Redis. Exiting.");
-        return;
+        return 1;
     }
     DbClient db;
-    S3Client s3("http://127.0.0.1:9000", "minio_admin", "minio_password", "letschat");
+    const std::string seaweed_master_endpoint = GetEnvOrDefault("SEAWEED_MASTER_ENDPOINT", "http://127.0.0.1:9333");
+    const std::string seaweed_public_endpoint = GetEnvOrDefault("SEAWEED_PUBLIC_ENDPOINT", "http://127.0.0.1:8080");
+    const std::string seaweed_bucket = GetEnvOrDefault("SEAWEED_BUCKET", "letschat");
+    const std::string seaweed_access_key = GetEnvOrDefault("SEAWEED_ACCESS_KEY", "");
+    const std::string seaweed_secret_key = GetEnvOrDefault("SEAWEED_SECRET_KEY", "");
+
+    S3Client s3(seaweed_master_endpoint,
+                seaweed_public_endpoint,
+                seaweed_bucket,
+                seaweed_access_key,
+                seaweed_secret_key);
+
+    if (!s3.CheckConnectivity()) {
+        spdlog::error("SeaweedFS unavailable, logic server exit with code {}", kStorageConnectErrorCode);
+        return kStorageConnectErrorCode;
+    }
+
     std::string db_conn_str = "dbname=LetsChat user=admin password=password123 hostaddr=127.0.0.1 port=5432";
     if(!db.Connect(db_conn_str)){
         spdlog::error("failed to connect to database , server exit");
-        return;
+        return 2;
     }
     LogicServiceImpl service(&redis, &db ,&s3);
 
@@ -207,12 +241,11 @@ void RunServer(){
     spdlog::info("logic Server is listening on {}", server_address);
 
     server->Wait();
+    return 0;
 }
 
 int main(){
     spdlog::set_pattern("[%H:%H:%S%z][%^%L%$][Logic]%v");
 
-    RunServer();
-
-    return 0;
+    return RunServer();
 }

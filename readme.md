@@ -21,6 +21,8 @@ LetsChat 是一个基于 C++ 开发的高性能、分布式即时通讯(IM)后�
 
     日志: spdlog
 
+    对象存储: SeaweedFS (master + volume)
+
 1.2 系统架构 (Architecture)
 
 系统采用典型的分层架构，主要包含以下组件：
@@ -147,7 +149,7 @@ Bash
 
 cd docker
 docker compose up -d
-# 确保 postgres 和 redis 容器已启动
+# 确保 postgres、redis、weed_master、weed_volume 容器已启动
 
 5.3 数据库初始化 (首次运行)
 Bash
@@ -174,13 +176,48 @@ make -j4
 # 启动 Gateway Server (后)
 ./bin/gateway_server
 
+
+5.5 SeaweedFS 配置与连通性检查
+Bash
+
+# Logic Server 启动前可选配置（默认值如下）
+export SEAWEED_MASTER_ENDPOINT=http://127.0.0.1:9333
+export SEAWEED_PUBLIC_ENDPOINT=http://127.0.0.1:8080
+export SEAWEED_BUCKET=letschat
+export SEAWEED_ACCESS_KEY=""
+export SEAWEED_SECRET_KEY=""
+
+# Logic Server 启动时会检查 /dir/status
+# 若 SeaweedFS 不可达，进程将直接退出并返回错误码 42
+
+5.6 本地端到端示例（上传/下载）
+Bash
+
+# 1) 先走业务登录（示例 HTTP 接口，获取 uid/token）
+curl -X POST http://127.0.0.1:8000/api/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user1@test.com","password":"123456"}'
+
+# 2) 通过 Gateway WebSocket 请求 GetUploadUrl（Cmd=0x1008）
+#    响应中可拿到 upload_url / download_url（Cmd=0x1009）
+#    这里给出响应示例：
+#    {"err_code":0,"upload_url":"http://127.0.0.1:8080/3,01637037d6?collection=letschat&filename=1/demo.png",
+#      "download_url":"http://127.0.0.1:8080/3,01637037d6?collection=letschat"}
+
+# 3) 使用 upload_url 上传文件（SeaweedFS volume）
+curl -X PUT --data-binary @./demo.png \
+  'http://127.0.0.1:8080/3,01637037d6?collection=letschat&filename=1/demo.png'
+
+# 4) 使用 download_url 下载文件
+curl -L 'http://127.0.0.1:8080/3,01637037d6?collection=letschat' -o downloaded_demo.png
+
 6. 待办事项 (TODO)
 
     [ ] 群聊功能: 新增群成员关系表，实现消息扩散。
 
     [ ] 心跳保活: 实现 Heartbeat (0x0001) 处理，超时断开连接。
 
-    [ ] MinIO 集成: 支持图片/文件上传。
+    [x] SeaweedFS 集成: 支持图片/文件上传 URL 分配与下载链接生成。
 
     [ ] 连接池: 优化 DB 和 Redis 的连接管理。
 
