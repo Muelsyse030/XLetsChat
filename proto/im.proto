@@ -6,6 +6,7 @@ enum ErrorCode {
     ERR_SYS_ERROR = 1;
     ERR_AUTH_FAIL = 1001;
     ERR_USER_NOT_FOUND = 1002;
+    ERR_NOT_FRIEND = 1003;
 }
 
 enum MsgType {
@@ -45,8 +46,9 @@ message MsgSendReq {
 
 message MsgSendRes {
     ErrorCode err_code = 1;
-    int64 msg_id = 2;
-    int64 create_time = 3;
+    string err_msg = 2;
+    int64 msg_id = 3;
+    int64 create_time = 4;
 }
 
 message MsgPush {
@@ -105,4 +107,44 @@ message GetUploadUrlRes{
     string err_msg = 2;
     string upload_url = 3;
     string download_url = 4;
+}
+message SendFriendReq{
+    int64 from_uid = 1;
+    int64 to_uid = 2;
+    string reason = 3;
+}
+message SendFriendRes{
+    ErrorCode err_code = 1;
+    string err_msg = 2;
+    int64 req_id = 3;
+}
+message RespondFriendReq{
+    int64 req_id = 1;
+    bool accept = 2;
+}
+message RespondFriendRes{
+    ErrorCode err_code = 1;
+    string err_msg = 2;
+}
+message FriendRequest{
+    int64 req_id = 1;
+    int64 from_uid = 2;
+    int64 to_uid = 3;
+    string reason = 4;
+    int64 create_time = 5;
+    int32 status = 6;
+}
+message FriendListReq{
+    int64 uid = 1;
+}
+message FriendListRes{
+    ErrorCode err_code = 1;
+    repeated int64 friend_uids = 2;
+}
+message GetFriendReqsReq{
+    int64 uid = 1;
+}
+message GetFriendReqsRes{
+    ErrorCode err_code = 1;
+    repeated FriendRequest requests = 2;
 }

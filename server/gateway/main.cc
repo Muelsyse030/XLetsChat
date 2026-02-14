@@ -9,6 +9,7 @@
 #include <grpcpp/create_channel.h>
 #include <thread>
 #include <nlohmann/json.hpp>
+#include "../../common/config/config.h"
 
 std::unique_ptr<im::LogicService::Stub> logic_stub;
 using json = nlohmann::json;
@@ -65,7 +66,8 @@ class GatewayServiceImpl final : public im::GatewayService::Service{
 };
 
 void RunGrpcServer(){
-        std::string server_address = "0.0.0.0:50052";
+        Config& config = Config::Instance();
+        std::string server_address = config.GetGrpcConfig().gateway_server_listen_addr;
         GatewayServiceImpl service;
 
          grpc::ServerBuilder builder;
@@ -80,13 +82,21 @@ void RunGrpcServer(){
 int main() {
 
     spdlog::set_pattern("[%H:%M:%S%z][%^%L%$][Gateway-uWS] %v");
+    
+    // Load configuration
+    Config& config = Config::Instance();
+    if (!config.Load("../config.yaml")) {
+        spdlog::error("Failed to load configuration. Exiting.");
+        return 1;
+    }
+
     spdlog::info("Starting uWebSockets Gateway on port 8000...");
 
     std::thread grpc_thread(RunGrpcServer);
     grpc_thread.detach();
 
     //初始化gRpc Channel
-    std::string logic_server_address = "0.0.0.0:50051";
+    std::string logic_server_address = config.GetGrpcConfig().logic_server_addr;
     auto channel = grpc::CreateChannel(logic_server_address , grpc::InsecureChannelCredentials());
     logic_stub = im::LogicService::NewStub(channel);
     spdlog::info("Connected to Logic Server at {}", logic_server_address);

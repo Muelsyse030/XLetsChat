@@ -122,7 +122,7 @@ class DbClient{
     }
     bool CheckUserByEmail(const std::string& email , const std::string& password , im::HttpLoginRes& user_info){
         if(!conn_) return false;
-        std::string sql = "SELECT id, nickname, password FROM t_user WHERE email='" + email + "'";
+        std::string sql = "SELECT id, username, password FROM t_user WHERE email='" + email + "'";
         PGresult* res = PQexec(conn_ , sql.c_str());
         if(PQresultStatus(res) != PGRES_TUPLES_OK || PQntuples(res) == 0){
             PQclear(res);
@@ -140,6 +140,98 @@ class DbClient{
         PQclear(res);
         return true;
     }
+    //创建好友请求返回生成的req_id
+    bool CreateFriendRequest(int64_t from_uid , int64_t to_uid , const std::string& reason , int64_t& out_req_id){
+        if(!conn_) return false;
+        long now = time(nullptr);
+         std::string sql = "INSERT INTO t_friend_request (from_uid, to_uid, reason, create_time) VALUES (" +
+                      std::to_string(from_uid) + ", " + std::to_string(to_uid) + ", '" +
+                      reason + "', " + std::to_string(now) + ") RETURNING id";
+        PGresult* res = PQexec(conn_ , sql.c_str());
+        if(PQresultStatus(res)!=PGRES_TUPLES_OK){
+            PQclear(res);
+            return false;
+        }              
+        out_req_id = std::stoll(PQgetvalue(res , 0 , 0));
+        PQclear(res);
+        return true;
+    }
+    std::vector<im::FriendRequest> GetFriendRequestsForUser(int64_t uid){
+        std::vector<im::FriendRequest> list;
+        if(!conn_) return list;
+         std::string sql = "SELECT id, from_uid, to_uid, reason, create_time, status FROM t_friend_request WHERE to_uid=" + std::to_string(uid) + " AND status=0 ORDER BY id ASC";
+        PGresult* res = PQexec(conn_ , sql.c_str());
+        if(PQresultStatus(res) == PGRES_TUPLES_OK){
+            int rows = PQntuples(res);
+            for(int i = 0 ; i<rows ; i++){
+                im::FriendRequest fr;
+                fr.set_req_id(std::stoll(PQgetvalue(res , i , 0)));
+                fr.set_from_uid(std::stoll(PQgetvalue(res , i , 1)));
+                fr.set_to_uid(std::stoll(PQgetvalue(res , i , 2)));
+                fr.set_reason(PQgetvalue(res , i , 3));
+                fr.set_create_time(std::stoll(PQgetvalue(res , i , 4)));
+                fr.set_status(std::stoi(PQgetvalue(res , i , 5)));
+                list.push_back(fr);
+            }
+        }
+    }
+    bool AcceptFriendRequest(int64_t req_id) {
+    if(!conn_) return false;
+    // 查出请求
+    std::string sql = "SELECT from_uid, to_uid FROM t_friend_request WHERE id=" + std::to_string(req_id) + " AND status=0";
+    PGresult* res = PQexec(conn_, sql.c_str());
+    if(PQresultStatus(res) != PGRES_TUPLES_OK || PQntuples(res) == 0){
+        PQclear(res);
+        return false;
+    }
+    int64_t from_uid = std::stoll(PQgetvalue(res, 0, 0));
+    int64_t to_uid = std::stoll(PQgetvalue(res, 0, 1));
+    PQclear(res);
+
+    long now = time(nullptr);
+    // 插入双向好友记录（uid <-> friend_uid）
+    std::string ins1 = "INSERT INTO t_friend (uid, friend_uid, create_time) VALUES (" + std::to_string(from_uid) + ", " + std::to_string(to_uid) + ", " + std::to_string(now) + ") ON CONFLICT DO NOTHING";
+    std::string ins2 = "INSERT INTO t_friend (uid, friend_uid, create_time) VALUES (" + std::to_string(to_uid) + ", " + std::to_string(from_uid) + ", " + std::to_string(now) + ") ON CONFLICT DO NOTHING";
+    PGresult* r1 = PQexec(conn_, ins1.c_str());
+    PGresult* r2 = PQexec(conn_, ins2.c_str());
+    if(PQresultStatus(r1) != PGRES_COMMAND_OK || PQresultStatus(r2) != PGRES_COMMAND_OK){
+        PQclear(r1);
+        PQclear(r2);
+        return false;
+    }
+    PQclear(r1);
+    PQclear(r2);
+
+    // 更新请求状态为已接受
+    std::string upd = "UPDATE t_friend_request SET status=1 WHERE id=" + std::to_string(req_id);
+    PGresult* ur = PQexec(conn_, upd.c_str());
+    PQclear(ur);
+    return true;
+}
+
+bool AreFriends(int64_t uid1, int64_t uid2) {
+    if(!conn_) return false;
+    std::string sql = "SELECT 1 FROM t_friend WHERE uid=" + std::to_string(uid1) + " AND friend_uid=" + std::to_string(uid2) + " LIMIT 1";
+    PGresult* res = PQexec(conn_, sql.c_str());
+    bool ok = (PQresultStatus(res) == PGRES_TUPLES_OK && PQntuples(res) > 0);
+    PQclear(res);
+    return ok;
+}
+
+std::vector<int64_t> ListFriends(int64_t uid) {
+    std::vector<int64_t> out;
+    if(!conn_) return out;
+    std::string sql = "SELECT friend_uid FROM t_friend WHERE uid=" + std::to_string(uid);
+    PGresult* res = PQexec(conn_, sql.c_str());
+    if(PQresultStatus(res) == PGRES_TUPLES_OK){
+        int rows = PQntuples(res);
+        for(int i=0;i<rows;i++){
+            out.push_back(std::stoll(PQgetvalue(res, i, 0)));
+        }
+    }
+    PQclear(res);
+    return out;
+}
     private:
     PGconn* conn_;
 };

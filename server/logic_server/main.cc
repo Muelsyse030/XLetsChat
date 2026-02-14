@@ -14,6 +14,7 @@
 #include <mutex>
 #include <unordered_map>
 #include "s3_client.h"
+#include "../../common/config/config.h"
 
 using grpc::Server;
 using grpc::ServerBuilder;
@@ -80,6 +81,12 @@ public:
     }
     Status SendMsg(ServerContext* context , const MsgSendReq* request , MsgSendRes* reply) override {
         const auto& msg = request->msg();
+        if(!db_->AreFriends(msg.from_uid() , msg.to_uid())){
+            reply->set_err_code(im::ErrorCode::ERR_NOT_FRIEND);
+            reply->set_err_msg("You must be friend to send message");
+            spdlog::info("->SendMsg blocked : {} -> {} not friends" , msg.from_uid() , msg.to_uid());
+            return Status::OK;
+        }
         spdlog::info("RPC sendMsg: from={} to={} content={}" , msg.from_uid() , msg.to_uid() , msg.content());
         
         int64_t msg_id = std::chrono::system_clock::now().time_since_epoch().count();
@@ -186,6 +193,53 @@ public:
         spdlog::info("-> Generated Upload URL for {}", object_key);
         return Status::OK;
     }
+    Status SendFriendRequest(ServerContext* context , const im::SendFriendReq* req , im::SendFriendRes* reply) override {
+        spdlog::info("PRC SendFriendRequest : from={} to={} reason={}",req->from_uid() , req->to_uid() , req->reason());
+        int64_t req_id = 0;
+        if(db_->CreateFriendRequest(req->from_uid() , req->to_uid() , req->reason() , req_id)){
+            reply->set_err_code(im::ErrorCode::ERR_SUCCESS);
+            reply->set_req_id(req_id);
+            spdlog::info("->Friend request created: id={}" , req_id);
+        }else{
+            reply->set_err_code(im::ErrorCode::ERR_SYS_ERROR);
+            reply->set_err_msg("Failed to create friend request");
+            spdlog::error("->Failed to create friend request from {} to {}" , req->from_uid() , req->to_uid());
+        }
+        return Status::OK;
+    }
+    Status RespondFriendRequest(ServerContext* context , const im::RespondFriendReq* req , im::RespondFriendRes* reply) override{
+        spdlog::info("RPC RespondFriendRequest: req_id={} accept={} " , req->req_id() , req->accept());
+        if(req->accept()){
+            if(db_->AcceptFriendRequest(req->req_id())){
+                reply->set_err_code(im::ErrorCode::ERR_SUCCESS);
+                spdlog::info("Friend request accepted : req_id = {}" , req->req_id());
+            }else{
+                reply->set_err_code(im::ErrorCode::ERR_SYS_ERROR);
+                reply->set_err_msg("Failed to accept friend request");
+            }
+        }else{
+            std::string sql = "UPDATE t_friend_request SET status=2 WHERE id=" + std::to_string(req->req_id());
+            db_->Execute(sql);
+            reply->set_err_code(im::ERR_SUCCESS);
+        }
+        return Status::OK;
+    }
+
+    Status ListFriends(ServerContext* context, const im::FriendListReq* request, im::FriendListRes* reply) override {
+    auto list = db_->ListFriends(request->uid());
+    reply->set_err_code(im::ERR_SUCCESS);
+    for(auto f : list) reply->add_friend_uids(f);
+    return Status::OK;
+    }
+
+    Status GetFriendRequests(ServerContext* context, const im::GetFriendReqsReq* request, im::GetFriendReqsRes* reply) override {
+    auto reqs = db_->GetFriendRequestsForUser(request->uid());
+    reply->set_err_code(im::ERR_SUCCESS);
+    for(const auto& r : reqs){
+        *reply->add_requests() = r;
+    }
+    return Status::OK;
+}
     private:
         RedisClient* redis_;
         DbClient* db_;
@@ -202,15 +256,31 @@ std::string GetEnvOrDefault(const char* key, const std::string& default_value) {
 
 int RunServer(){
     constexpr int kStorageConnectErrorCode = 42;
-    std::string server_address("0.0.0.0:50051");
+    
+    // Load configuration
+    Config& config = Config::Instance();
+    if (!config.Load("../config.yaml")) {
+        spdlog::error("Failed to load configuration. Exiting.");
+        return 1;
+    }
+
+    // Get config values
+    const auto& redis_cfg = config.GetRedisConfig();
+    const auto& db_cfg = config.GetPostgresConfig();
+    const auto& grpc_cfg = config.GetGrpcConfig();
+    const auto& seaweedfs_cfg = config.GetSeaweedFSConfig();
+
+    std::string server_address = grpc_cfg.logic_server_listen_addr;
+    
     RedisClient redis;
-    if(!redis.connect("0.0.0.0" , 6379 , "redis_pwd_123")){
+    if(!redis.connect(redis_cfg.host, redis_cfg.port, redis_cfg.password)){
         spdlog::error("Failed to connect to Redis. Exiting.");
         return 1;
     }
+    
     DbClient db;
-    const std::string seaweed_master_endpoint = GetEnvOrDefault("SEAWEED_MASTER_ENDPOINT", "http://127.0.0.1:9333");
-    const std::string seaweed_public_endpoint = GetEnvOrDefault("SEAWEED_PUBLIC_ENDPOINT", "http://127.0.0.1:8080");
+    const std::string seaweed_master_endpoint = seaweedfs_cfg.master_endpoint;
+    const std::string seaweed_public_endpoint = seaweedfs_cfg.public_endpoint;
     const std::string seaweed_bucket = GetEnvOrDefault("SEAWEED_BUCKET", "letschat");
     const std::string seaweed_access_key = GetEnvOrDefault("SEAWEED_ACCESS_KEY", "");
     const std::string seaweed_secret_key = GetEnvOrDefault("SEAWEED_SECRET_KEY", "");
@@ -226,7 +296,11 @@ int RunServer(){
         return kStorageConnectErrorCode;
     }
 
-    std::string db_conn_str = "dbname=LetsChat user=admin password=password123 hostaddr=127.0.0.1 port=5432";
+    std::string db_conn_str = "dbname=" + db_cfg.dbname + 
+                              " user=" + db_cfg.user + 
+                              " password=" + db_cfg.password + 
+                              " hostaddr=" + db_cfg.host + 
+                              " port=" + std::to_string(db_cfg.port);
     if(!db.Connect(db_conn_str)){
         spdlog::error("failed to connect to database , server exit");
         return 2;

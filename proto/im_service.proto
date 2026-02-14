@@ -9,6 +9,10 @@ service LogicService {
     rpc RegisterUser (RegisterReq) returns (RegisterRes);
     rpc HttpLogin (HttpLoginReq) returns (HttpLoginRes);
     rpc GetUploadUrl (GetUploadUrlReq) returns (GetUploadUrlRes);
+    rpc SendFriendRequest(SendFriendReq) returns (SendFriendRes);
+    rpc RespondFriendRequest(RespondFriendReq) returns (RespondFriendRes);
+    rpc ListFriends (FriendListReq) returns (FriendListRes);
+    rpc GetFriendRequests (GetFriendReqsReq) returns (GetFriendReqsRes);
 }
 service GatewayService {
     rpc PushMsg (PushMsgReq) returns (PushMsgRes);
