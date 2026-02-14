@@ -1,0 +1,25 @@
+# Redis Configuration
+redis:
+  host: "0.0.0.0"
+  port: 6379
+  password: "redis_pwd_123"
+
+# PostgreSQL Configuration
+postgres:
+  host: "127.0.0.1"
+  port: 5432
+  user: "admin"
+  password: "password123"
+  dbname: "LetsChat"
+
+# gRPC Configuration
+grpc:
+  logic_server_addr: "0.0.0.0:50051"
+  gateway_server_addr: "0.0.0.0:50052"
+  logic_server_listen_addr: "0.0.0.0:50051"
+  gateway_server_listen_addr: "0.0.0.0:50052"
+
+# SeaweedFS Configuration
+seaweedfs:
+  master_endpoint: "http://127.0.0.1:9333"
+  public_endpoint: "http://127.0.0.1:8080"
