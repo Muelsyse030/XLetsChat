@@ -130,10 +130,19 @@ int main() {
                 }
                 const uint8_t* buffer = reinterpret_cast<const uint8_t*>(message.data());
                 PacketHeader header = PacketHelper::DecodeHeader(buffer);
+                if (header.length < HEADER_LEN) {
+                    spdlog::warn("Invalid packet length in header: {}", header.length);
+                    return;
+                }
+                if (header.length > message.length()) {
+                    spdlog::warn("Incomplete packet: header length {} > payload {}", header.length, message.length());
+                    return;
+                }
+                const uint32_t body_len = header.length - HEADER_LEN;
                 
                 if(header.cmd_id == 0x1001){
                     im::LoginReq req;
-                    if(req.ParseFromArray(buffer + HEADER_LEN , header.length - HEADER_LEN)){
+                    if(req.ParseFromArray(buffer + HEADER_LEN , body_len)){
                         spdlog::info(">>recv logincReq: uid = {}" , req.uid());
                         im::LoginRes res;
                         grpc::ClientContext context;
@@ -172,8 +181,7 @@ int main() {
                 }
                 else if(header.cmd_id == 0x1003){
                     im::MsgSendReq req;
-                    if((message.length() >= HEADER_LEN + (header.length - HEADER_LEN)) &&
-                        req.ParseFromArray(buffer + HEADER_LEN , message.length() - HEADER_LEN)){
+                    if(req.ParseFromArray(buffer + HEADER_LEN , body_len)){
                             int64_t current_id = ws->getUserData()->uid;
                             if(current_id == 0){
                                 spdlog::warn("User not logged in , frop msg");
@@ -212,8 +220,7 @@ int main() {
                 }
                 else if(header.cmd_id == 0x1006){
                     im::SyncMsgReq req;
-                    if(message.length() >= HEADER_LEN + (header.length - HEADER_LEN) &&
-                    req.ParseFromArray(buffer + HEADER_LEN , message.length() - HEADER_LEN)){
+                    if(req.ParseFromArray(buffer + HEADER_LEN , body_len)){
                         spdlog::info(">>>Recv SyncMsgReq LastMsgID = {}",req.last_msg_id());
                         req.set_uid(ws->getUserData()->uid);
                         im::SyncMsgRes res;
@@ -243,8 +250,7 @@ int main() {
                 }
                 else if (header.cmd_id == 0x1008) {
                     im::GetUploadUrlReq req;
-                    if (message.length() >= HEADER_LEN + (header.length - HEADER_LEN) &&
-                        req.ParseFromArray(buffer + HEADER_LEN, message.length() - HEADER_LEN)) {
+                    if (req.ParseFromArray(buffer + HEADER_LEN, body_len)) {
                         
                         req.set_uid(ws->getUserData()->uid);
                         spdlog::info(">>> Recv GetUploadUrlReq");
