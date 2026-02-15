@@ -9,8 +9,10 @@
 
 #include "im.pb.h"
 #include "im_service.grpc.pb.h"
-#include "redis_client.h"
-#include "db_client.h"
+#include "db_pool.h"
+#include "redis_pool.h"
+#include "pool_db_client.h"
+#include "pool_redis_client.h"
 #include <mutex>
 #include <unordered_map>
 #include "s3_client.h"
@@ -56,11 +58,11 @@ std::string PackPushMsg(const im::ChatMsg& chat_msg) {
 
 class LogicServiceImpl final : public LogicService::Service{
 public:
-    LogicServiceImpl(RedisClient* redis , DbClient* db , S3Client* s3) : redis_(redis),db_(db),s3_(s3){}
+    LogicServiceImpl(PooledRedisClient* redis_pool , PooledDbClient* db_pool , S3Client* s3) : redis_pool_(redis_pool),db_pool_(db_pool),s3_(s3){}
 
     Status Login(ServerContext* context , const LoginReq* request , LoginRes* reply) override {
         spdlog::info("PRC Login Request: Uid= {} , token = {} , device = {}" , request->uid() , request->token() , request->device_id());
-        std::string db_password = db_->GetUserPassword(request->uid());
+        std::string db_password = db_pool_->GetUserPassword(request->uid());
         if(!db_password.empty() && db_password == request->token()){
             reply->set_err_code(im::ERR_SUCCESS);
             reply->set_session_id("sess_"+ std::to_string(request->uid()));
@@ -68,7 +70,7 @@ public:
             std::string redis_key = "IM:USER:SESS" + std::to_string(request->uid());
             std::string gateway_addr = "0.0.0.0:50052";
 
-            if(redis_->Set(redis_key , gateway_addr)){
+            if(redis_pool_->Set(redis_key , gateway_addr)){
                 spdlog::info("->Login Success : Uid = {}", request->uid());
             }
         }
@@ -81,7 +83,7 @@ public:
     }
     Status SendMsg(ServerContext* context , const MsgSendReq* request , MsgSendRes* reply) override {
         const auto& msg = request->msg();
-        if(!db_->AreFriends(msg.from_uid() , msg.to_uid())){
+        if(!db_pool_->AreFriends(msg.from_uid() , msg.to_uid())){
             reply->set_err_code(im::ErrorCode::ERR_NOT_FRIEND);
             reply->set_err_msg("You must be friend to send message");
             spdlog::info("->SendMsg blocked : {} -> {} not friends" , msg.from_uid() , msg.to_uid());
@@ -91,13 +93,13 @@ public:
         
         int64_t msg_id = std::chrono::system_clock::now().time_since_epoch().count();
        
-        bool saved = db_->SaveMessage(std::to_string(msg_id) , msg.from_uid() , msg.to_uid() , msg.content());
+        bool saved = db_pool_->SaveMessage(std::to_string(msg_id) , msg.from_uid() , msg.to_uid() , msg.content());
         if(!saved){
             spdlog::error("failed to save messahe to DB");
         }
 
         std::string redis_key = "IM:USER:SESS:" + std::to_string(msg.to_uid());
-        auto gateway_addr_opt = redis_->Get(redis_key);
+        auto gateway_addr_opt = redis_pool_->Get(redis_key);
 
         if(gateway_addr_opt.has_value()){
             std::string gateway_addr = gateway_addr_opt.value();
@@ -136,7 +138,7 @@ public:
     Status SyncMsg(ServerContext* context , const im::SyncMsgReq* request , im::SyncMsgRes* reply) override{
         spdlog::info("RPC SyncMsg: Uid={} lastMsgID={}",request->uid() , request->last_msg_id());
 
-        std::vector<im::ChatMsg> history_msgs = db_->GetofflineMsgs(request->uid() , request->last_msg_id());
+        std::vector<im::ChatMsg> history_msgs = db_pool_->GetofflineMsgs(request->uid() , request->last_msg_id());
 
         reply->set_err_code(im::ERR_SUCCESS);
         for(const auto& msg : history_msgs){
@@ -148,7 +150,7 @@ public:
     Status RegisterUser(ServerContext* context , const im::RegisterReq* request , im::RegisterRes* reply) override{
         spdlog::info("RPC Register : emial={} nick={}",request->email() , request->nickname());
 
-        int64_t uid = db_->CreateUser(request->nickname() , request->password() , request->email());
+        int64_t uid = db_pool_->CreateUser(request->nickname() , request->password() , request->email());
         if(uid > 0){
             reply->set_err_code(0);
             reply->set_uid(uid);
@@ -161,10 +163,10 @@ public:
     }
     Status HttpLogin(ServerContext* context , const im::HttpLoginReq* request , im::HttpLoginRes* reply) override {
         spdlog::info("RPC Httplogin: emial={}",request->email());
-        if(db_->CheckUserByEmail(request->email() , request->password() , *reply)){
+        if(db_pool_->CheckUserByEmail(request->email() , request->password() , *reply)){
             reply->set_err_code(0);
             spdlog::info("User login sucess : uid={}",reply->uid());
-            redis_->Set("IM:USER:TOKEN"+std::to_string(reply->uid()) , request->password());
+            redis_pool_->Set("IM:USER:TOKEN"+std::to_string(reply->uid()) , request->password());
         }else{
             reply->set_err_code(1);
             reply->set_err_msg("Invaild email or passwrod");
@@ -196,7 +198,7 @@ public:
     Status SendFriendRequest(ServerContext* context , const im::SendFriendReq* req , im::SendFriendRes* reply) override {
         spdlog::info("PRC SendFriendRequest : from={} to={} reason={}",req->from_uid() , req->to_uid() , req->reason());
         int64_t req_id = 0;
-        if(db_->CreateFriendRequest(req->from_uid() , req->to_uid() , req->reason() , req_id)){
+        if(db_pool_->CreateFriendRequest(req->from_uid() , req->to_uid() , req->reason() , req_id)){
             reply->set_err_code(im::ErrorCode::ERR_SUCCESS);
             reply->set_req_id(req_id);
             spdlog::info("->Friend request created: id={}" , req_id);
@@ -210,7 +212,7 @@ public:
     Status RespondFriendRequest(ServerContext* context , const im::RespondFriendReq* req , im::RespondFriendRes* reply) override{
         spdlog::info("RPC RespondFriendRequest: req_id={} accept={} " , req->req_id() , req->accept());
         if(req->accept()){
-            if(db_->AcceptFriendRequest(req->req_id())){
+            if(db_pool_->AcceptFriendRequest(req->req_id())){
                 reply->set_err_code(im::ErrorCode::ERR_SUCCESS);
                 spdlog::info("Friend request accepted : req_id = {}" , req->req_id());
             }else{
@@ -219,21 +221,21 @@ public:
             }
         }else{
             std::string sql = "UPDATE t_friend_request SET status=2 WHERE id=" + std::to_string(req->req_id());
-            db_->Execute(sql);
+            db_pool_->Execute(sql);
             reply->set_err_code(im::ERR_SUCCESS);
         }
         return Status::OK;
     }
 
     Status ListFriends(ServerContext* context, const im::FriendListReq* request, im::FriendListRes* reply) override {
-    auto list = db_->ListFriends(request->uid());
+    auto list = db_pool_->ListFriends(request->uid());
     reply->set_err_code(im::ERR_SUCCESS);
     for(auto f : list) reply->add_friend_uids(f);
     return Status::OK;
     }
 
     Status GetFriendRequests(ServerContext* context, const im::GetFriendReqsReq* request, im::GetFriendReqsRes* reply) override {
-    auto reqs = db_->GetFriendRequestsForUser(request->uid());
+    auto reqs = db_pool_->GetFriendRequestsForUser(request->uid());
     reply->set_err_code(im::ERR_SUCCESS);
     for(const auto& r : reqs){
         *reply->add_requests() = r;
@@ -241,8 +243,8 @@ public:
     return Status::OK;
 }
     private:
-        RedisClient* redis_;
-        DbClient* db_;
+        PooledRedisClient* redis_pool_;
+        PooledDbClient* db_pool_;
         S3Client* s3_;
 };
 
@@ -271,14 +273,7 @@ int RunServer(){
     const auto& seaweedfs_cfg = config.GetSeaweedFSConfig();
 
     std::string server_address = grpc_cfg.logic_server_listen_addr;
-    
-    RedisClient redis;
-    if(!redis.connect(redis_cfg.host, redis_cfg.port, redis_cfg.password)){
-        spdlog::error("Failed to connect to Redis. Exiting.");
-        return 1;
-    }
-    
-    DbClient db;
+
     const std::string seaweed_master_endpoint = seaweedfs_cfg.master_endpoint;
     const std::string seaweed_public_endpoint = seaweedfs_cfg.public_endpoint;
     const std::string seaweed_bucket = GetEnvOrDefault("SEAWEED_BUCKET", "letschat");
@@ -301,11 +296,15 @@ int RunServer(){
                               " password=" + db_cfg.password + 
                               " hostaddr=" + db_cfg.host + 
                               " port=" + std::to_string(db_cfg.port);
-    if(!db.Connect(db_conn_str)){
-        spdlog::error("failed to connect to database , server exit");
-        return 2;
-    }
-    LogicServiceImpl service(&redis, &db ,&s3);
+
+    // Initialize connection pools and pooled clients
+    RedisPool redis_pool(redis_cfg.host, redis_cfg.port, redis_cfg.password, 2, 50);
+    PooledRedisClient pooled_redis(&redis_pool);
+
+    DbPool db_pool(db_conn_str, 2, 20);
+    PooledDbClient pooled_db(&db_pool);
+
+    LogicServiceImpl service(&pooled_redis, &pooled_db, &s3);
 
     ServerBuilder builder;
     builder.AddListeningPort(server_address , grpc::InsecureServerCredentials());
